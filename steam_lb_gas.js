@@ -1,7 +1,7 @@
 /**
  * Steam Leaderboard Manager (Google Apps Script)
  *
- * Version: 1.0.0
+ * Version: 1.0.1
  * License: MIT
  *
  * Manage Steam leaderboard entries from a Google Spreadsheet.
@@ -35,6 +35,9 @@ var API_BASE = 'https://partner.steam-api.com/ISteamLeaderboards';
 
 var STRINGS_ = {
   en: {
+    // Locale used to format timestamps written into cells
+    locale: 'en-US',
+
     // Sheet names
     sheetBoards: 'Leaderboards',
     sheetEntries: 'Entries',
@@ -159,6 +162,9 @@ var STRINGS_ = {
   },
 
   ja: {
+    // Locale used to format timestamps written into cells
+    locale: 'ja-JP',
+
     // Sheet names
     sheetBoards: 'リーダーボード一覧',
     sheetEntries: 'エントリ',
@@ -293,15 +299,27 @@ function getLang_() {
   return PropertiesService.getScriptProperties().getProperty('LANG') || 'en';
 }
 
+/**
+ * Look up a translated string and fill in its {placeholders}.
+ *
+ * Substitution is done in a single pass with a replacer function, so a value
+ * containing "$&" or "{anotherKey}" is inserted literally instead of being
+ * re-interpreted. Unknown placeholders are left untouched.
+ */
 function t_(key, replacements) {
   var lang = getLang_();
   var s = (STRINGS_[lang] && STRINGS_[lang][key]) || STRINGS_.en[key] || key;
-  if (replacements) {
-    Object.keys(replacements).forEach(function (k) {
-      s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), String(replacements[k]));
-    });
-  }
-  return s;
+  if (!replacements) return s;
+  return s.replace(/\{(\w+)\}/g, function (match, name) {
+    return Object.prototype.hasOwnProperty.call(replacements, name)
+      ? String(replacements[name])
+      : match;
+  });
+}
+
+/** Timestamp for cell values, formatted in the current UI language. */
+function timestamp_() {
+  return new Date().toLocaleString(t_('locale'));
 }
 
 function SHEET_BOARDS_() { return t_('sheetBoards'); }
@@ -557,7 +575,7 @@ function deleteCheckedEntries() {
   var cfg = getConfig_();
   var sheetName = SHEET_ENTRIES_();
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  var sheet = findSheet_(sheetName);
   if (!sheet) {
     ui.alert(t_('deleteNoSheet', { sheet: sheetName }));
     return;
@@ -619,7 +637,7 @@ function deleteCheckedEntries() {
       var code = (r && typeof r === 'object') ? r.result : null;
       if (code === 1 || code == null) {
         ok++;
-        sheet.getRange(tgt.row, 6).setValue(t_('deleteCellDone', { time: new Date().toLocaleString() }));
+        sheet.getRange(tgt.row, 6).setValue(t_('deleteCellDone', { time: timestamp_() }));
         sheet.getRange(tgt.row, 1, 1, 5).setBackground('#eeeeee').setFontLine('line-through');
       } else {
         ng++;
@@ -738,7 +756,7 @@ function bulkRegisterEntries() {
   var cfg = getConfig_();
   var sheetName = SHEET_REGISTER_();
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  var sheet = findSheet_(sheetName);
   if (!sheet) {
     ui.alert(t_('bulkNoSheet', { sheet: sheetName }));
     return;
@@ -807,7 +825,7 @@ function bulkRegisterEntries() {
       var code = (r && typeof r === 'object') ? r.result : null;
       if (code === 1 || code == null) {
         ok++;
-        sheet.getRange(tgt.row, 3).setValue(t_('bulkCellDone', { time: new Date().toLocaleString() }));
+        sheet.getRange(tgt.row, 3).setValue(t_('bulkCellDone', { time: timestamp_() }));
         sheet.getRange(tgt.row, 1, 1, 2).setBackground('#c8e6c9');
       } else {
         ng++;
@@ -833,31 +851,57 @@ function bulkRegisterEntries() {
 // Utilities / ユーティリティ
 // ================================================================
 
+var SHEET_NAME_KEYS_ = ['sheetBoards', 'sheetEntries', 'sheetRegister'];
+
 /**
- * Get or create a sheet by name.
- * When switching languages, if a sheet exists under the other language's name,
- * it will be renamed to match the current language.
+ * Which STRINGS_ key does this sheet name correspond to, in the current
+ * language? Returns null for sheets this script does not manage.
  */
-function getOrCreateSheet_(name) {
+function sheetKeyForName_(name) {
+  var lang = getLang_();
+  for (var i = 0; i < SHEET_NAME_KEYS_.length; i++) {
+    if (STRINGS_[lang][SHEET_NAME_KEYS_[i]] === name) return SHEET_NAME_KEYS_[i];
+  }
+  return null;
+}
+
+/**
+ * Find a managed sheet by its current-language name.
+ *
+ * The UI language can be switched at any time, which changes the expected sheet
+ * name. If the sheet is not found under the current name but the same sheet
+ * exists under another language's name, it is renamed and returned — otherwise
+ * data fetched before the switch would look missing.
+ *
+ * Returns null when no matching sheet exists.
+ */
+function findSheet_(name) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(name);
   if (sheet) return sheet;
 
-  // Check if a sheet exists under the other language's name and rename it
-  var lang = getLang_();
-  var otherLang = (lang === 'ja') ? 'en' : 'ja';
-  var sheetNameKeys = ['sheetBoards', 'sheetEntries', 'sheetRegister'];
-  for (var i = 0; i < sheetNameKeys.length; i++) {
-    if (STRINGS_[lang][sheetNameKeys[i]] === name) {
-      var otherName = STRINGS_[otherLang][sheetNameKeys[i]];
-      var otherSheet = ss.getSheetByName(otherName);
-      if (otherSheet) {
-        otherSheet.setName(name);
-        return otherSheet;
-      }
-      break;
+  var key = sheetKeyForName_(name);
+  if (!key) return null;
+
+  var langs = Object.keys(STRINGS_);
+  for (var i = 0; i < langs.length; i++) {
+    var otherName = STRINGS_[langs[i]][key];
+    if (otherName === name) continue;
+    var otherSheet = ss.getSheetByName(otherName);
+    if (otherSheet) {
+      otherSheet.setName(name);
+      return otherSheet;
     }
   }
+  return null;
+}
 
-  return ss.insertSheet(name);
+/**
+ * Get a managed sheet by name, creating it if it does not exist yet.
+ * Renames a sheet left over from another UI language — see findSheet_.
+ */
+function getOrCreateSheet_(name) {
+  var sheet = findSheet_(name);
+  if (sheet) return sheet;
+  return SpreadsheetApp.getActiveSpreadsheet().insertSheet(name);
 }
