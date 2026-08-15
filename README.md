@@ -123,6 +123,10 @@ replacement — there is no need to re-run Setup.
   "Prepare Registration Sheet" sets that format for you.
 - The sheet is a **snapshot** taken when you ran "Get Entries". Rankings do not update on their
   own; run it again to refresh.
+- **"Prepare Registration Sheet" rebuilds the sheet from scratch.** If the header labels do not
+  match the current UI language — for example because you switched languages after creating the
+  sheet — it is cleared, along with any SteamID64 and score rows you had entered. Finish your
+  bulk registration, or copy the data elsewhere, before running it again.
 
 ## Troubleshooting
 
