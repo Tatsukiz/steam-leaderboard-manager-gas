@@ -1,7 +1,7 @@
 /**
  * Steam Leaderboard Manager (Google Apps Script)
  *
- * Version: 1.0.1
+ * Version: 1.0.0
  * License: MIT
  *
  * Manage Steam leaderboard entries from a Google Spreadsheet.
